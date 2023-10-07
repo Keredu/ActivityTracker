@@ -1,14 +1,15 @@
 import sqlite3
 from datetime import datetime
 
-# Connect to SQLite database (it will create it if not existent)
-conn = sqlite3.connect("activity_tracker.db")
-cursor = conn.cursor()
+DB_NAME = "activity_tracker.db"
 
-def create_tables():
+def connect_db():
+    """Create a connection to the SQLite database."""
+    return sqlite3.connect(DB_NAME)
+
+def create_tables(conn):
     """Create necessary tables in the database."""
-    
-    # Table for tracking activities
+    cursor = conn.cursor()
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS activities (
         id INTEGER PRIMARY KEY,
@@ -20,15 +21,13 @@ def create_tables():
         FOREIGN KEY(activity) REFERENCES valid_activities(activity)
     )
     """)
-    
-    # Table for valid topics
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS valid_topics (
         topic TEXT PRIMARY KEY
     )
     """)
-    
-    # Table for valid activities associated with topics
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS valid_activities (
         activity TEXT,
@@ -36,7 +35,6 @@ def create_tables():
         FOREIGN KEY(topic) REFERENCES valid_topics(topic)
     )
     """)
-    
     conn.commit()
 
 def validate_datetime_format(dt_str):
@@ -47,129 +45,135 @@ def validate_datetime_format(dt_str):
     except ValueError:
         return False
 
-def add_valid_topic(topic):
+def add_valid_topic(conn, topic):
     """Add a valid topic to the database."""
-    cursor.execute("INSERT OR IGNORE INTO valid_topics (topic) VALUES (?)", (topic,))
-    conn.commit()
+    with conn:  # Using the connection as a context manager
+        conn.execute("INSERT OR IGNORE INTO valid_topics (topic) VALUES (?)", (topic,))
 
-def add_valid_activity(activity, topic):
+def add_valid_activity(conn, activity, topic):
     """Add a valid activity associated with a topic to the database."""
-    cursor.execute("INSERT OR IGNORE INTO valid_activities (activity, topic) VALUES (?, ?)", (activity, topic))
-    conn.commit()
+    with conn:
+        conn.execute("INSERT OR IGNORE INTO valid_activities (activity, topic) VALUES (?, ?)", (activity, topic))
 
-def list_valid_topics():
+def list_valid_topics(conn):
     """List all valid topics."""
+    cursor = conn.cursor()
     cursor.execute("SELECT topic FROM valid_topics")
     topics = cursor.fetchall()
     return [t[0] for t in topics]
 
-def list_valid_activities(topic):
+def list_valid_activities(conn, topic):
     """List valid activities for a given topic."""
+    cursor = conn.cursor()
     cursor.execute("SELECT activity FROM valid_activities WHERE topic=?", (topic,))
     activities = cursor.fetchall()
     return [a[0] for a in activities]
 
-def start_activity(topic, activity):
-    """Start a new activity and store the start time."""
-    start_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    cursor.execute("""
-    INSERT INTO activities (start_time, end_time, topic, activity) 
-    VALUES (?, ?, ?, ?)
-    """, (start_time, None, topic, activity))
-    conn.commit()
-    return cursor.lastrowid
-
-def end_activity(activity_id):
-    """End the current activity and store the end time."""
-    end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    cursor.execute("""
-    UPDATE activities SET end_time = ? WHERE id = ?
-    """, (end_time, activity_id))
-    conn.commit()
-
-def add_previous_activity(start_time, end_time, topic, activity):
+def add_previous_activity(conn, start_time, end_time, topic, activity):
     """Add details of a previously done activity."""
+    cursor = conn.cursor()
     cursor.execute("""
     INSERT INTO activities (start_time, end_time, topic, activity) 
     VALUES (?, ?, ?, ?)
     """, (start_time, end_time, topic, activity))
     conn.commit()
 
-def main():
-    """Main function for the Activity Tracker."""
-    create_tables()
-    current_activity_id = None
+def start_activity(topic, activity):
+    """Start a new activity and return the start time."""
+    return datetime.now().strftime('%Y-%m-%d %H:%M:%S'), topic, activity
 
+def store_activity(conn, start_time, topic, activity):
+    """Store the started activity in the database."""
+    end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    with conn:
+        conn.execute("""
+        INSERT INTO activities (start_time, end_time, topic, activity) 
+        VALUES (?, ?, ?, ?)
+        """, (start_time, end_time, topic, activity))
+
+def main(conn):
+    """Main function for the Activity Tracker."""
+    create_tables(conn)
+    current_activity = None  
+    valid_topics = list_valid_topics(conn)
+    valid_activities = {topic: list_valid_activities(conn, topic) for topic in valid_topics}
+        
     while True:
         print("\nActivity Tracker:")
         print("1. Start new activity")
-        print("2. End current activity")
-        print("3. Add a previous activity")
-        print("4. Add a valid topic")
-        print("5. Add a valid activity to a topic")
-        print("6. List valid topics and activities")
-        print("7. Quit")
-
+        print("2. Add a previous activity")
+        print("3. Add a valid topic")
+        print("4. Add a valid activity to a topic")
+        print("5. List valid topics and activities")
+        print("6. Quit")
         choice = input("Enter your choice: ")
 
         if choice == "1":
             topic = input("Enter the topic (e.g., work, projects): ")
             activity = input("Enter the activity: ")
-            if topic in list_valid_topics() and activity in list_valid_activities(topic):
-                current_activity_id = start_activity(topic, activity)
+            if topic in valid_topics and activity in valid_activities.get(topic, []):
+                if current_activity:
+                    print("There's an ongoing activity. Please end or cancel it first.")
+                    continue
+                current_activity = start_activity(topic, activity)
                 print(f"Started activity '{activity}'.")
+                print("Press 'e' and Enter to end the activity. Press 'c' and Enter to cancel the activity.")
+                
+                while True:
+                    key = input()
+                    if key.lower() == 'e':
+                        store_activity(conn, *current_activity)
+                        print("Activity ended successfully!")
+                        current_activity = None
+                        break
+                    elif key.lower() == 'c':
+                        print("Activity cancelled.")
+                        current_activity = None
+                        break
             else:
                 print("Invalid topic or activity. Make sure they are added to the valid list.")
 
         elif choice == "2":
-            if not current_activity_id:
-                print("No ongoing activity to end.")
-                continue
-            end_activity(current_activity_id)
-            print("Activity ended successfully!")
-            current_activity_id = None
-
-        elif choice == "3":
             start_time = input("Enter the start time (YYYY-MM-DD HH:MM:SS): ")
             if not validate_datetime_format(start_time):
                 print("Invalid start time format. Please use 'YYYY-MM-DD HH:MM:SS'")
                 continue
-
             end_time = input("Enter the end time (YYYY-MM-DD HH:MM:SS): ")
             if not validate_datetime_format(end_time):
                 print("Invalid end time format. Please use 'YYYY-MM-DD HH:MM:SS'")
                 continue
-
             topic = input("Enter the topic (e.g., work, personal-projects): ")
             activity = input("Describe the activity: ")
-            if topic in list_valid_topics() and activity in list_valid_activities(topic):
-                add_previous_activity(start_time, end_time, topic, activity)
+            if topic in valid_topics and activity in valid_activities.get(topic, []):
+                add_previous_activity(conn, start_time, end_time, topic, activity)
                 print("Previous activity added successfully!")
             else:
                 print("Invalid topic or activity. Make sure they are added to the valid list.")
 
-        elif choice == "4":
+        elif choice == "3":
             topic = input("Enter a valid topic: ")
-            add_valid_topic(topic)
+            add_valid_topic(conn, topic)
+            valid_topics.append(topic)
             print(f"Added topic '{topic}' to valid topics.")
 
-        elif choice == "5":
+        elif choice == "4":
             topic = input("Enter the topic for the activity: ")
-            if topic not in list_valid_topics():
+            if topic not in valid_topics:
                 print("Invalid topic. Please enter a valid topic first.")
                 continue
             activity = input("Enter a valid activity for the topic: ")
-            add_valid_activity(activity, topic)
+            add_valid_activity(conn, activity, topic)
+            valid_activities.setdefault(topic, []).append(activity)
             print(f"Added activity '{activity}' for topic '{topic}'.")
 
-        elif choice == "6":
+        elif choice == "5":
             print("Valid Topics and Activities:")
-            for topic in list_valid_topics():
+            for topic, activities in valid_activities.items():
                 print(f"- {topic}:")
-                for activity in list_valid_activities(topic):
+                for activity in activities:
                     print(f"  - {activity}")
 
-        elif choice == "7":
+        elif choice == "6":
             print("Goodbye!")
             break
 
@@ -177,7 +181,12 @@ def main():
             print("Invalid choice. Please try again.")
 
 if __name__ == "__main__":
-    main()
-
-# Close the connection when done
-conn.close()
+    try:
+        conn = connect_db()  # create the DB connection at the beginning
+        main(conn)
+    except KeyboardInterrupt:
+        print("\nGoodbye!")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    finally:
+        conn.close()  # ensure that the DB connection is closed at the end
