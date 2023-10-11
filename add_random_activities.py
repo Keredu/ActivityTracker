@@ -1,22 +1,7 @@
-import sqlite3
 import random
+import json
 from datetime import datetime, timedelta
-
-# Connect to the SQLite database
-conn = sqlite3.connect("activity_tracker.db")
-cursor = conn.cursor()
-
-def get_valid_topics():
-    """Retrieve a list of valid topics from the database."""
-    cursor.execute("SELECT topic FROM valid_topics")
-    topics = cursor.fetchall()
-    return [t[0] for t in topics]
-
-def get_valid_activities(topic):
-    """Retrieve a list of valid activities for a given topic."""
-    cursor.execute("SELECT activity FROM valid_activities WHERE topic=?", (topic,))
-    activities = cursor.fetchall()
-    return [a[0] for a in activities]
+from database import ActivityDatabase  # Import the ActivityDatabase class
 
 def generate_random_time_range():
     """Generate a random start and end time for an activity."""
@@ -29,17 +14,9 @@ def generate_random_time_range():
 
     return start_time, end_time
 
-def add_activity(start_time, end_time, topic, activity):
-    """Add an activity with a given start and end time to the database."""
-    cursor.execute("""
-    INSERT INTO activities (start_time, end_time, topic, activity) 
-    VALUES (?, ?, ?, ?)
-    """, (start_time, end_time, topic, activity))
-    conn.commit()
-
-def input_random_data():
+def input_random_data(db):
     """Insert random data into the database."""
-    topics = get_valid_topics()
+    topics = db.list_valid_topics()
 
     if not topics:
         print("No valid topics found. Please add some to continue.")
@@ -47,7 +24,7 @@ def input_random_data():
 
     for _ in range(100):  # adding 100 random activities
         topic = random.choice(topics)
-        activities = get_valid_activities(topic)
+        activities = db.list_valid_activities(topic)
 
         if not activities:
             continue  # skip the topic if there are no valid activities
@@ -55,10 +32,25 @@ def input_random_data():
         activity = random.choice(activities)
 
         start_time, end_time = generate_random_time_range()
-        add_activity(start_time, end_time, topic, activity)
+        db.add_previous_activity(start_time, end_time, topic, activity)
 
     print("Random activities added successfully!")
 
+
 if __name__ == "__main__":
-    input_random_data()
-    conn.close()
+    # Load the configuration from test_config.json
+    with open("test_config.json", "r") as file:
+        config = json.load(file)
+    database_name = config['database_name']
+    
+    valid_config_topics = set(config['valid_topics_and_activities'].keys())
+    valid_config_activities = config['valid_topics_and_activities']
+    
+    # Create an instance of ActivityDatabase
+    db = ActivityDatabase(config['database_name'])
+
+    # Initialize valid topics and activities from config
+    db.initialize_valid_topics_and_activities(valid_config_topics, valid_config_activities)
+
+    input_random_data(db)
+    db.close()  # Close the database connection using the close method of ActivityDatabase

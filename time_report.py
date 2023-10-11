@@ -1,8 +1,8 @@
 import sqlite3
 from datetime import datetime
 
-# Connect to SQLite database
-conn = sqlite3.connect("activity_tracker.db")
+# Create an instance of ActivityDatabase
+conn = sqlite3.connect("test.db")
 cursor = conn.cursor()
 
 def calculate_time_spent_for_topic():
@@ -23,28 +23,21 @@ def calculate_time_spent_for_activity(topic):
     """, (topic,))
     return cursor.fetchall()
 
-def format_seconds_as_dhms(seconds):
-    days = seconds // 86400
-    seconds %= 86400
+def format_seconds_as_hms(seconds):
     hours = seconds // 3600
     seconds %= 3600
     minutes = seconds // 60
     seconds %= 60
-    return f"{days}d {hours}h {minutes}m {seconds}s"
+    return f"{hours}h {minutes}m {seconds}s"
 
 def display_report():
-    print("Time Spent per Topic:")
-    print("---------------------")
     for topic, time in calculate_time_spent_for_topic():
-        formatted_time = format_seconds_as_dhms(time)
-        print(f"{topic}: {formatted_time}")
-
-        print(f"\nTime Spent in '{topic}' per Activity:")
-        print("--------------------------------------")
+        formatted_time = format_seconds_as_hms(time)
+        print(f"- {topic}: {formatted_time}")
         for activity, time in calculate_time_spent_for_activity(topic):
-            formatted_time = format_seconds_as_dhms(time)
-            print(f"{activity}: {formatted_time}")
-        print()
+            formatted_time = format_seconds_as_hms(time)
+            print(f"    - {activity}: {formatted_time}")
+        print("==========================")
 
 if __name__ == "__main__":
     display_report()

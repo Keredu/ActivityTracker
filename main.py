@@ -1,41 +1,7 @@
-import sqlite3
+import argparse  # Import argparse module
+import json
 from datetime import datetime
-
-DB_NAME = "activity_tracker.db"
-
-def connect_db():
-    """Create a connection to the SQLite database."""
-    return sqlite3.connect(DB_NAME)
-
-def create_tables(conn):
-    """Create necessary tables in the database."""
-    cursor = conn.cursor()
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS activities (
-        id INTEGER PRIMARY KEY,
-        start_time DATETIME,
-        end_time DATETIME,
-        topic TEXT,
-        activity TEXT,
-        FOREIGN KEY(topic) REFERENCES valid_topics(topic),
-        FOREIGN KEY(activity) REFERENCES valid_activities(activity)
-    )
-    """)
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS valid_topics (
-        topic TEXT PRIMARY KEY
-    )
-    """)
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS valid_activities (
-        activity TEXT,
-        topic TEXT,
-        FOREIGN KEY(topic) REFERENCES valid_topics(topic)
-    )
-    """)
-    conn.commit()
+from database import ActivityDatabase  # Import the ActivityDatabase class
 
 def validate_datetime_format(dt_str):
     """Validate if the given string matches the datetime format."""
@@ -45,59 +11,33 @@ def validate_datetime_format(dt_str):
     except ValueError:
         return False
 
-def add_valid_topic(conn, topic):
-    """Add a valid topic to the database."""
-    with conn:  # Using the connection as a context manager
-        conn.execute("INSERT OR IGNORE INTO valid_topics (topic) VALUES (?)", (topic,))
+def validate_end_time(start_time, end_time):
+    """Validate if the end time is later than the start time."""
+    start = datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
+    end = datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S')
+    return end > start
 
-def add_valid_activity(conn, activity, topic):
-    """Add a valid activity associated with a topic to the database."""
-    with conn:
-        conn.execute("INSERT OR IGNORE INTO valid_activities (activity, topic) VALUES (?, ?)", (activity, topic))
-
-def list_valid_topics(conn):
-    """List all valid topics."""
-    cursor = conn.cursor()
-    cursor.execute("SELECT topic FROM valid_topics")
-    topics = cursor.fetchall()
-    return [t[0] for t in topics]
-
-def list_valid_activities(conn, topic):
-    """List valid activities for a given topic."""
-    cursor = conn.cursor()
-    cursor.execute("SELECT activity FROM valid_activities WHERE topic=?", (topic,))
-    activities = cursor.fetchall()
-    return [a[0] for a in activities]
-
-def add_previous_activity(conn, start_time, end_time, topic, activity):
-    """Add details of a previously done activity."""
-    cursor = conn.cursor()
-    cursor.execute("""
-    INSERT INTO activities (start_time, end_time, topic, activity) 
-    VALUES (?, ?, ?, ?)
-    """, (start_time, end_time, topic, activity))
-    conn.commit()
+def get_user_input(prompt, validation_func=None):
+    """Get user input and validate it if a validation function is provided."""
+    while True:
+        user_input = input(prompt)
+        if validation_func and not validation_func(user_input):
+            print("Invalid input. Please try again.")
+        else:
+            return user_input
 
 def start_activity(topic, activity):
     """Start a new activity and return the start time."""
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S'), topic, activity
 
-def store_activity(conn, start_time, topic, activity):
-    """Store the started activity in the database."""
-    end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    with conn:
-        conn.execute("""
-        INSERT INTO activities (start_time, end_time, topic, activity) 
-        VALUES (?, ?, ?, ?)
-        """, (start_time, end_time, topic, activity))
 
-def main(conn):
+
+def main(db):
     """Main function for the Activity Tracker."""
-    create_tables(conn)
-    current_activity = None  
-    valid_topics = list_valid_topics(conn)
-    valid_activities = {topic: list_valid_activities(conn, topic) for topic in valid_topics}
-        
+    current_activity = None
+    valid_topics = db.list_valid_topics()
+    valid_activities = {topic: db.list_valid_activities(topic) for topic in valid_topics}
+
     while True:
         print("\nActivity Tracker:")
         print("1. Start new activity")
@@ -106,11 +46,11 @@ def main(conn):
         print("4. Add a valid activity to a topic")
         print("5. List valid topics and activities")
         print("6. Quit")
-        choice = input("Enter your choice: ")
+        choice = get_user_input("Enter your choice: ", lambda x: x in "123456")
 
         if choice == "1":
-            topic = input("Enter the topic (e.g., work, projects): ")
-            activity = input("Enter the activity: ")
+            topic = get_user_input("Enter the topic (e.g., work, projects): ")
+            activity = get_user_input("Enter the activity: ")
             if topic in valid_topics and activity in valid_activities.get(topic, []):
                 if current_activity:
                     print("There's an ongoing activity. Please end or cancel it first.")
@@ -118,11 +58,11 @@ def main(conn):
                 current_activity = start_activity(topic, activity)
                 print(f"Started activity '{activity}'.")
                 print("Press 'e' and Enter to end the activity. Press 'c' and Enter to cancel the activity.")
-                
+
                 while True:
-                    key = input()
+                    key = get_user_input("Press 'e' and Enter to end the activity. Press 'c' and Enter to cancel the activity: ")
                     if key.lower() == 'e':
-                        store_activity(conn, *current_activity)
+                        db.store_activity(*current_activity)
                         print("Activity ended successfully!")
                         current_activity = None
                         break
@@ -134,35 +74,33 @@ def main(conn):
                 print("Invalid topic or activity. Make sure they are added to the valid list.")
 
         elif choice == "2":
-            start_time = input("Enter the start time (YYYY-MM-DD HH:MM:SS): ")
-            if not validate_datetime_format(start_time):
-                print("Invalid start time format. Please use 'YYYY-MM-DD HH:MM:SS'")
+            start_time = get_user_input("Enter the start time (YYYY-MM-DD HH:MM:SS): ", validate_datetime_format)
+            end_time = get_user_input("Enter the end time (YYYY-MM-DD HH:MM:SS): ", validate_datetime_format)
+
+            if not validate_end_time(start_time, end_time):
+                print("End time should be later than the start time.")
                 continue
-            end_time = input("Enter the end time (YYYY-MM-DD HH:MM:SS): ")
-            if not validate_datetime_format(end_time):
-                print("Invalid end time format. Please use 'YYYY-MM-DD HH:MM:SS'")
-                continue
-            topic = input("Enter the topic (e.g., work, personal-projects): ")
-            activity = input("Describe the activity: ")
+            topic = get_user_input("Enter the topic (e.g., work, personal-projects): ")
+            activity = get_user_input("Describe the activity: ")
             if topic in valid_topics and activity in valid_activities.get(topic, []):
-                add_previous_activity(conn, start_time, end_time, topic, activity)
+                db.add_previous_activity(start_time, end_time, topic, activity)
                 print("Previous activity added successfully!")
             else:
                 print("Invalid topic or activity. Make sure they are added to the valid list.")
 
         elif choice == "3":
-            topic = input("Enter a valid topic: ")
-            add_valid_topic(conn, topic)
+            topic = get_user_input("Enter a valid topic: ")
+            db.add_valid_topic(topic)
             valid_topics.append(topic)
             print(f"Added topic '{topic}' to valid topics.")
 
         elif choice == "4":
-            topic = input("Enter the topic for the activity: ")
+            topic = get_user_input("Enter the topic for the activity: ")
             if topic not in valid_topics:
                 print("Invalid topic. Please enter a valid topic first.")
                 continue
-            activity = input("Enter a valid activity for the topic: ")
-            add_valid_activity(conn, activity, topic)
+            activity = get_user_input("Enter a valid activity for the topic: ")
+            db.add_valid_activity(activity, topic)
             valid_activities.setdefault(topic, []).append(activity)
             print(f"Added activity '{activity}' for topic '{topic}'.")
 
@@ -180,13 +118,34 @@ def main(conn):
         else:
             print("Invalid choice. Please try again.")
 
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Activity Tracker')  # Create argument parser
+    parser.add_argument('--conf', default='test_config.json', help='Path to the configuration file')  # Add argument for configuration file path
+    args = parser.parse_args()  # Parse the arguments
+
+    config_path = args.conf  # Get the configuration file path from arguments
+    
+    # Load the configuration
+    with open(config_path, "r") as file:  # Use config_path instead of hardcoded 'config.json'
+        config = json.load(file)
+    db = None
     try:
-        conn = connect_db()  # create the DB connection at the beginning
-        main(conn)
+        database_name = config['database_name']
+        db = ActivityDatabase(database_name)  # Create an instance of ActivityDatabase
+        
+        valid_config_topics = set(config['valid_topics_and_activities'].keys())
+        valid_config_activities = config['valid_topics_and_activities']
+        
+        db.initialize_valid_topics_and_activities(valid_config_topics, valid_config_activities)
+        
+        main(db)
     except KeyboardInterrupt:
         print("\nGoodbye!")
     except Exception as e:
         print(f"An error occurred: {e}")
     finally:
-        conn.close()  # ensure that the DB connection is closed at the end
+        if db:
+            db.close()  # Close the database connection using the close method of ActivityDatabase
+
+       
