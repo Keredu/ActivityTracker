@@ -1,100 +1,92 @@
 import sqlite3
-import datetime
+from datetime import datetime
 
 
 class ActivityDatabase:
-    DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
+    DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
     def __init__(self, database_name):
+        self.database_name = database_name
         self.conn = sqlite3.connect(database_name)
         self.create_tables()
 
+    @staticmethod
+    def validate_datetime_format(dt_str):
+        """Validates if the given string is in the correct datetime format."""
+        try:
+            datetime.strptime(dt_str, ActivityDatabase.DATE_FORMAT)
+            return True
+        except ValueError:
+            return False
+
     def create_tables(self):
-        commands = [
-            """
+        with self.conn:
+            self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS topics_and_subtopics (
+                id INTEGER PRIMARY KEY,
+                topic TEXT NOT NULL,
+                subtopic TEXT DEFAULT "",
+                UNIQUE(topic, subtopic)
+            )
+            """)
+
+            self.conn.execute("""
             CREATE TABLE IF NOT EXISTS activities (
                 id INTEGER PRIMARY KEY,
                 start_time DATETIME,
                 end_time DATETIME,
-                topic TEXT,
-                activity TEXT,
-                FOREIGN KEY(topic) REFERENCES valid_topics(topic),
-                FOREIGN KEY(activity) REFERENCES valid_activities(activity)
+                topic_subtopic_id INTEGER,
+                FOREIGN KEY(topic_subtopic_id) REFERENCES topics_and_subtopics(id)
             )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS valid_topics (
-                topic TEXT PRIMARY KEY
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS valid_activities (
-                activity TEXT,
-                topic TEXT,
-                FOREIGN KEY(topic) REFERENCES valid_topics(topic)
-            )
-            """
-        ]
-        with self.conn:
-            cursor = self.conn.cursor()
-            for command in commands:
-                cursor.execute(command)
+            """)
 
-    def add_valid_topic(self, topic, exists_ok=False):
+    def add_topic_or_subtopic(self, topic, subtopic="", exists_ok=False):
         cursor = self.conn.cursor()
-        cursor.execute("SELECT topic FROM valid_topics WHERE topic=?", (topic,))
-        existing_topic = cursor.fetchone()
-        if existing_topic is None:
+        cursor.execute("SELECT id FROM topics_and_subtopics WHERE topic=? AND subtopic=?", (topic, subtopic))
+        existing_entry = cursor.fetchone()
+        if existing_entry is None:
             with self.conn:
-                self.conn.execute("INSERT INTO valid_topics (topic) VALUES (?)", (topic,))
+                self.conn.execute("INSERT INTO topics_and_subtopics (topic, subtopic) VALUES (?, ?)", (topic, subtopic))
         elif not exists_ok:
-            print(f"Warning: Topic '{topic}' already exists.")
+            raise ValueError(f"Entry with topic '{topic}' and subtopic '{subtopic}' already exists.")
 
-    def add_valid_activity(self, activity, topic, exists_ok=False):
+    def get_topics(self):
         cursor = self.conn.cursor()
-        cursor.execute("SELECT activity FROM valid_activities WHERE activity=? AND topic=?", (activity, topic))
-        existing_activity = cursor.fetchone()
-        if existing_activity is None:
+        cursor.execute("SELECT DISTINCT topic FROM topics_and_subtopics")
+        return [row[0] for row in cursor.fetchall()]
+
+    def get_subtopics(self, topic):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT subtopic FROM topics_and_subtopics WHERE topic=?", (
+        topic,))
+        return [row[0] for row in cursor.fetchall()]
+
+    def get_topics_and_subtopics(self):
+        topics = self.get_topics()
+        topics_and_subtopics = {}
+        for topic in topics:
+            subtopics = self.get_subtopics(topic)
+            topics_and_subtopics[topic] = subtopics
+        return topics_and_subtopics
+
+    def insert_activity(self, start_time, end_time, topic, subtopic):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT id FROM topics_and_subtopics WHERE topic=? AND subtopic=?", (topic, subtopic))
+        topic_subtopic_id = cursor.fetchone()
+        if topic_subtopic_id:
             with self.conn:
-                self.conn.execute("INSERT INTO valid_activities (activity, topic) VALUES (?, ?)", (activity, topic))
-        elif not exists_ok:
-            print(f"Warning: Activity '{activity}' under topic '{topic}' already exists.")
+                self.conn.execute("INSERT INTO activities (start_time, end_time, topic_subtopic_id) VALUES (?, ?, ?)",
+                                  (start_time, end_time, topic_subtopic_id[0]))
+        else:
+            raise ValueError(f"Invalid topic '{topic}' or subtopic '{subtopic}'.")
 
-
-    def list_valid_topics(self):
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT topic FROM valid_topics")
-        topics = cursor.fetchall()
-        return [t[0] for t in topics]
-
-    def list_valid_activities(self, topic):
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT activity FROM valid_activities WHERE topic=?", (topic,))
-        activities = cursor.fetchall()
-        return [a[0] for a in activities]
-
-    def add_previous_activity(self, start_time, end_time, topic, activity):
-        with self.conn:
-            self.conn.execute("""
-            INSERT INTO activities (start_time, end_time, topic, activity) 
-            VALUES (?, ?, ?, ?)
-            """, (start_time, end_time, topic, activity))
-
-    def store_activity(self, start_time, topic, activity):
-        end_time = datetime.now().strftime(self.DATE_FORMAT)
-        with self.conn:
-            self.conn.execute("""
-            INSERT INTO activities (start_time, end_time, topic, activity) 
-            VALUES (?, ?, ?, ?)
-            """, (start_time, end_time, topic, activity))
-
-    def initialize_valid_topics_and_activities(self, valid_config_topics, valid_config_activities):
-        for topic in valid_config_topics:
-            self.add_valid_topic(topic, exists_ok=True)
-        for topic, activities in valid_config_activities.items():
-            for activity in activities:
-                self.add_valid_activity(activity, topic, exists_ok=True)
-
+    def initialize_topics_and_subtopics(self, topics_and_subtopics):
+        for topic, subtopics in topics_and_subtopics.items():
+            self.add_topic_or_subtopic(topic, exists_ok=True)
+            for subtopic in subtopics:
+                self.add_topic_or_subtopic(topic, subtopic, exists_ok=True)
 
     def close(self):
-        self.conn.close()
+        if self.conn:
+            self.conn.close()
+

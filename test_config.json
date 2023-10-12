@@ -1,8 +1,8 @@
 {
     "database_name": "test.db",
-    "valid_topics_and_activities": {
-        "work": ["coding", "meetings"],
-        "projects": ["design", "documentation"],
-        "hobby": ["reading", "painting"]
+    "topics_and_subtopics": {
+        "Work": ["coding", "meetings"],
+        "Projects": ["design", "documentation"],
+        "Hobby": ["reading", "painting"]
     }
 }
