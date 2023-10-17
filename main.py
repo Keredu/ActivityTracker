@@ -1,6 +1,8 @@
 import argparse
 import json
 import os
+import sys
+import time
 from datetime import datetime
 
 from database import ActivityDatabase
@@ -57,13 +59,6 @@ def get_subtopic_by_number(subtopics):
                 print("❌ Invalid subtopic number. Please try again.")
         except ValueError:
             print("❌ Please enter a valid number.")
-
-
-def validate_topic_and_subtopic(db, topic, subtopic):
-    topics_and_subtopics = db.get_topics_and_subtopics()
-    topic_ok = topic in topics_and_subtopics.keys()
-    subtopic_ok = subtopic in topics_and_subtopics.get(topic, [])
-    return topic_ok and subtopic_ok
 
 
 def get_user_input(prompt, validation_func=None):
@@ -150,12 +145,102 @@ def list_valid_topics_and_subtopics(db):
     clear_console()
 
 
-def main(db):
+def pomodoro_timer_with_input(minutes, valid_inputs=['c', 'e']):
+    """Timer that waits for a specified amount of minutes and checks for user input."""
+    end_time = time.time() + minutes * 60
+
+    while time.time() < end_time:
+        try:
+            time.sleep(1)
+            # For UNIX, Linux, etc.
+            import select
+            i, o, e = select.select([sys.stdin], [], [], 0.0001)
+            if i:
+                user_input = sys.stdin.readline().strip()
+                if user_input in valid_inputs:
+                    return user_input
+        except KeyboardInterrupt:
+            pass
+    return None
+
+
+def start_pomodoro(db, pomodoro_time, short_break, long_break, max_pomodoros):
+    pomodoros_done = 0
+
+    print("Select a topic:")
+    topics = display_topics(db)
+    topic = get_topic_by_number(topics)
+    print(f"Selected topic: {topic}")
+
+    print("Select a subtopic:")
+    subtopics = display_subtopics(db, topic)
+    subtopic = get_subtopic_by_number(subtopics)
+    print(f"Selected subtopic: {subtopic}")
+
+    while True:
+        clear_console()
+        print(f"\nStarting Pomodoro #{pomodoros_done + 1} on '{topic} -> {subtopic}'.")
+        print("Press 'e' to end and save the Pomodoro. Press 'c' to cancel the Pomodoro.")
+        start_time = datetime.now().strftime(db.DATE_FORMAT)
+        user_choice = pomodoro_timer_with_input(pomodoro_time)
+        
+        if user_choice == 'c':
+            print("Pomodoro cancelled.")
+            msg = "Would you like to start another Pomodoro (p) or return to the menu (m)? [p/m]: "
+            decision = get_user_input(msg, lambda x: x in ['p', 'm'])
+            if decision == 'p':
+                continue
+            else:
+                break
+        elif user_choice == 'e' or user_choice is None:
+            end_time = datetime.now().strftime(db.DATE_FORMAT)
+            db.insert_activity(start_time=start_time,
+                               end_time=end_time,
+                               topic=topic,
+                               subtopic=subtopic)
+            print("Pomodoro ended successfully!")
+        
+        pomodoros_done += 1
+
+        if pomodoros_done == max_pomodoros:
+            print(f"You've completed {max_pomodoros} Pomodoros!")
+            
+            decision = get_user_input("Would you like to take a long break (l) or return to the menu (m)? [l/m]: ", lambda x: x in ['l', 'm'])
+            if decision == 'l':
+                print(f"\nStarting a {long_break}-minute break. Press 'c' to cancel.")
+                if pomodoro_timer_with_input(long_break, ['c']) == 'c':
+                    print("Break cancelled.")
+                # After the long break, ask the user if they want to start another round of pomodoros or return to the menu.
+                decision_after_break = get_user_input("Would you like to start another round of Pomodoros (r) or return to the menu (m)? [r/m]: ", lambda x: x in ['r', 'm'])
+                if decision_after_break == 'r':
+                    pomodoros_done = 0  # reset pomodoro count and continue with the while loop
+                    continue
+                else:
+                    break  # return to main menu
+            else:
+                break  # return to main menu
+        else:
+            msg  = "Would you like to take a short break (s), "
+            msg += "start another Pomodoro (p), or return to the menu (m)? [s/p/m]: "
+            decision = get_user_input(msg, lambda x: x in ['s', 'p', 'm'])
+            if decision == 's':
+                print(f"\nStarting a {short_break}-minute break. Press 'c' to cancel.")
+                if pomodoro_timer_with_input(short_break, ['c']) == 'c':
+                    print("Break cancelled.")
+            elif decision == 'p':
+                continue
+            else:
+                break
+
+
+
+def main(db, pomodoro_config):
     menu_options = {
-        "1": ("Start new activity", start_new_activity, ),
+        "1": ("Start new activity", start_new_activity),
         "2": ("Add a previous activity", add_previous_activity),
         "3": ("List valid topics and subtopics", list_valid_topics_and_subtopics),
-        "4": ("Quit", None)
+        "4": ("Start a Pomodoro", lambda db: start_pomodoro(db, **pomodoro_config)),
+        "5": ("Quit", None)
     }
 
     text = None
@@ -176,7 +261,7 @@ def main(db):
 
 
 if __name__ == "__main__":
-    CONFIG_KEYS = ['database_name', 'topics_and_subtopics']
+    CONFIG_KEYS = ['database_name', 'topics_and_subtopics', 'pomodoro']
     parser = argparse.ArgumentParser(description='Activity Tracker')
     parser.add_argument('--conf', required=True, help='Path to the configuration file')
     args = parser.parse_args()
@@ -198,7 +283,7 @@ if __name__ == "__main__":
 
         db.initialize_topics_and_subtopics(config_topics_and_subtopics)
 
-        main(db)
+        main(db, pomodoro_config=config['pomodoro'])
 
     except FileNotFoundError:
         print(f"Config file '{config_path}' not found.")
