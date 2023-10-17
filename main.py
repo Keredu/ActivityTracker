@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import select
 import sys
 import time
 from datetime import datetime
@@ -153,7 +154,6 @@ def pomodoro_timer_with_input(minutes, valid_inputs=['c', 'e']):
         try:
             time.sleep(1)
             # For UNIX, Linux, etc.
-            import select
             i, o, e = select.select([sys.stdin], [], [], 0.0001)
             if i:
                 user_input = sys.stdin.readline().strip()
